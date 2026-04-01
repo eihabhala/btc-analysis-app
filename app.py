@@ -3,6 +3,100 @@ import openai
 from PIL import Image
 import base64
 from io import BytesIO
+import datetime
+from fpdf import FPDF
+
+
+def generate_pdf(asset, timeframe, market_type, img_pil, analysis_text):
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # Header
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_text_color(46, 134, 222)
+    pdf.cell(0, 12, "Chart Explorer", new_x="LMARGIN", new_y="NEXT", align="C")
+
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 7, "AI-Powered Technical Analysis Report", new_x="LMARGIN", new_y="NEXT", align="C")
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 6, datetime.datetime.utcnow().strftime("Generated: %Y-%m-%d %H:%M UTC"),
+             new_x="LMARGIN", new_y="NEXT", align="C")
+
+    pdf.ln(4)
+    pdf.set_draw_color(46, 134, 222)
+    pdf.set_line_width(0.5)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(6)
+
+    # Chart details
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_text_color(30, 30, 30)
+    pdf.cell(0, 8, "Chart Details", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+    for label, value in [
+        ("Asset / Symbol", asset or "Not specified"),
+        ("Timeframe", timeframe),
+        ("Market Type", market_type),
+    ]:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(52, 7, f"{label}:", new_x="RIGHT", new_y="TOP")
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(0, 7, value, new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(4)
+
+    # Chart image
+    if img_pil:
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(0, 8, "Chart Image", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
+
+        img_buf = BytesIO()
+        img_pil.save(img_buf, format="PNG")
+        img_buf.seek(0)
+
+        iw, ih = img_pil.size
+        disp_w = 190
+        disp_h = disp_w * (ih / iw)
+        if disp_h > 110:
+            disp_h = 110
+            disp_w = disp_h * (iw / ih)
+
+        pdf.image(img_buf, x=(210 - disp_w) / 2, w=disp_w, h=disp_h)
+        pdf.ln(6)
+
+    # AI Analysis
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_text_color(30, 30, 30)
+    pdf.cell(0, 8, "AI Technical Analysis", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+    pdf.set_fill_color(245, 248, 255)
+    pdf.set_draw_color(46, 134, 222)
+    pdf.set_text_color(30, 30, 30)
+    pdf.set_font("Helvetica", "", 10)
+    clean_text = analysis_text.encode("latin-1", "replace").decode("latin-1")
+    pdf.multi_cell(0, 6, clean_text, fill=True, border=1)
+
+    pdf.ln(6)
+
+    # Disclaimer
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(150, 150, 150)
+    pdf.multi_cell(0, 5,
+        "Disclaimer: This report is for educational purposes only and does not constitute "
+        "financial advice. Always conduct your own research and manage risk appropriately.")
+
+    return bytes(pdf.output())
+
+
 
 # Page configuration
 st.set_page_config(
@@ -155,17 +249,40 @@ Keep the response under 250 words. Be direct, specific, and actionable."""
                         ]
                     )
 
-                    analysis_result = chat.choices[0].message.content
-
-                    st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
-                    st.markdown(analysis_result)
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    st.session_state["analysis_result"] = chat.choices[0].message.content
+                    st.session_state["analysis_asset"] = asset_name
+                    st.session_state["analysis_timeframe"] = timeframe
+                    st.session_state["analysis_market"] = market_type
+                    st.session_state["analysis_image"] = image
 
                     st.success("✅ Analysis completed!")
 
                 except Exception as e:
                     st.error(f"Error during analysis: {str(e)}")
                     st.info("Please check your API key and try again.")
+
+        # Display persisted analysis
+        if "analysis_result" in st.session_state:
+            st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+            st.markdown(st.session_state["analysis_result"])
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Export as PDF
+            pdf_bytes = generate_pdf(
+                st.session_state.get("analysis_asset", ""),
+                st.session_state.get("analysis_timeframe", ""),
+                st.session_state.get("analysis_market", ""),
+                st.session_state.get("analysis_image"),
+                st.session_state["analysis_result"],
+            )
+            filename = f"chart-explorer-{st.session_state.get('analysis_asset', 'report') or 'report'}.pdf"
+            st.download_button(
+                label="📄 Export as PDF",
+                data=pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
     elif not api_key:
         st.warning("⚠️ Please enter your OpenAI API key in the sidebar to proceed.")
